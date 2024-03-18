@@ -1,0 +1,16 @@
+python-dotenv
+langchain
+openai
+flask
+requests
+flask_cors
+langchain-pinecone
+langchain-openai
+langchain-text-splitters
+langchainhub
+google-search-results
+psycopg2-binary
+gunicorn
+Flask-HTTPAuth
+langsmith
+pypdf
