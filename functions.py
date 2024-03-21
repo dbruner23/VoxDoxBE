@@ -21,7 +21,7 @@ def load_pdf(filepath):
     splits = text_splitter.split_documents(pages)
     vectorstore = PineconeVectorStore.from_documents(splits, embeddings, index_name=index_name)
     
-    return vectorstore, pages
+    return vectorstore, pages, splits
 
 def clear_documents():
     vectorstore = PineconeVectorStore(embedding=embeddings, index_name=index_name)

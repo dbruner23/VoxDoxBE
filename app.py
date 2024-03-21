@@ -1,10 +1,17 @@
 import os
 import pickle
+from dataclasses import asdict
 from langchain import hub
 from typing import List
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
+from langchain.llms import OpenAI
 from langchain_openai import OpenAIEmbeddings
+from langchain.chains.llm import LLMChain
+from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+from langchain.prompts import PromptTemplate
+from langchain.chains.summarize import load_summarize_chain
+from langchain.chains import MapReduceDocumentsChain, ReduceDocumentsChain
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -15,7 +22,14 @@ from flask import Flask, request, jsonify, Response, session
 from flask_cors import CORS
 from dotenv import find_dotenv, load_dotenv
 from functions import load_pdf, clear_documents, cited_answer
-from helpers import prepare_whole_document_for_frontend, convert_ai_msg_to_json, convert_messages_to_dict
+from helpers import (
+    serialize_documents,
+    convert_ai_msg_to_json,
+    convert_messages_to_dict,
+    save_splits_to_file,
+    load_splits_from_file,
+    delete_splits_file
+)
 from werkzeug.utils import secure_filename
 
 load_dotenv(find_dotenv())
@@ -24,7 +38,8 @@ index_name = os.getenv("PINECONE_INDEX_NAME")
 
 flask_app = Flask(__name__)
 CORS(flask_app)
-flask_app.secret_key = os.urandom(24) 
+flask_app.secret_key = os.urandom(24)
+session_id = os.urandom(24).hex() 
 
 @flask_app.route("/process", methods=["POST"])
 def process_file():
@@ -34,7 +49,8 @@ def process_file():
     file = request.files['file']
     filename = secure_filename(file.filename)
     filepath = os.path.join('/tmp', filename)
-    file.save(filepath)
+    session['current_filepath'] = filepath
+    file.save(filepath) 
     file_type = request.form.get('fileType')
     
     if file_type not in {'csv', 'pdf', 'html', 'md'}:
@@ -43,11 +59,11 @@ def process_file():
     print(file_type)
     
     if (file_type == 'pdf'):
-        vectorstore, pages =  load_pdf(filepath)
-        pages_json = prepare_whole_document_for_frontend(pages)
+        vectorstore, pages, splits =  load_pdf(filepath)
+        save_splits_to_file(serialize_documents(splits), session_id)
+        pages_dicts = serialize_documents(pages)
 
-    os.remove(filepath)
-    return jsonify(pages_json), 200
+    return jsonify(pages_dicts), 200
 
 @flask_app.route("/query", methods=["POST"])
 def query():
@@ -107,11 +123,13 @@ def query():
         tool_choice="cited_answer",
     )
     
+    output_parser = JsonOutputKeyToolsParser(key_name="cited_answer", return_single=True)
+    
     rag_chain_from_docs = (
         RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
         | qa_prompt
-        | llm
-        | StrOutputParser()
+        | llm_with_tool
+        | output_parser
     )
     
     rag_chain_with_source = RunnableParallel(
@@ -127,12 +145,74 @@ def query():
     ai_msg = rag_chain_with_source.invoke(user_question)
     ai_msg = rag_chain_with_source.invoke(contextualized_question({"question": user_question, "chat_history": session["chat_history"]}))
     session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict(ai_msg)])
+    print(ai_msg)
     ai_msg_json = convert_ai_msg_to_json(ai_msg)
     
     return ai_msg_json, 200
 
+@flask_app.route("/summarise", methods=["POST"])
+def summarize_document():
+    data = request.get_json()
+    user_question = data.get("question")
+
+    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
+    splits_dicts = load_splits_from_file(session_id)
+    if not splits_dicts:
+        return jsonify({"error": "No documents loaded"}), 400
+    splits = [Document(page_content=doc_dict['page_content'], metadata=doc_dict['metadata']) for doc_dict in splits_dicts]
+    
+    map_template = """The following is a set of documents
+    {docs}
+    Based on this list of docs, please identify the main themes 
+    Helpful Answer:"""
+    map_prompt = PromptTemplate.from_template(map_template)
+    map_chain = LLMChain(llm=llm, prompt=map_prompt)
+    
+    reduce_template = """The following is set of summaries:
+    {docs}
+    Take these and distill it into a final, consolidated summary of the main themes. 
+    Helpful Answer:"""
+    reduce_prompt = PromptTemplate.from_template(reduce_template)
+    
+    reduce_chain = LLMChain(llm=llm, prompt=reduce_prompt)
+    
+    combine_documents_chain = StuffDocumentsChain(
+    llm_chain=reduce_chain, document_variable_name="docs"
+    )
+    
+    reduce_documents_chain = ReduceDocumentsChain(
+        combine_documents_chain=combine_documents_chain,
+        collapse_documents_chain=combine_documents_chain,
+        token_max=4000,
+    )
+    
+    map_reduce_chain = MapReduceDocumentsChain(
+        llm_chain=map_chain,
+        reduce_documents_chain=reduce_documents_chain,
+        document_variable_name="docs",
+        return_intermediate_steps=False,
+    )
+    
+    summary = map_reduce_chain.run(splits)
+    print(summary)
+    # chain = load_summarize_chain(
+    #     llm=llm,
+    #     chain_type="refine",
+    #     input_key="input_documents",
+    #     output_key="output_text"
+    # )
+    # summary = chain.run(splits)
+    # print(summary)
+    
+    return jsonify({"summary": summary}), 200
+    
+    
+
 @flask_app.route("/delete", methods=["GET"])
 def delete_documents():
+    if "current_filepath" in session:
+        del session["current_filepath"]
+    delete_splits_file(session_id)
     clear_documents()
     return jsonify({"message": "All documents deleted"}), 200
     
