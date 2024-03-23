@@ -26,7 +26,7 @@ from langchain_pinecone import PineconeVectorStore
 from flask import Flask, request, jsonify, Response, session
 from flask_cors import CORS
 from dotenv import find_dotenv, load_dotenv
-from functions import load_pdf, clear_documents, cited_answer
+from functions import load_pdf, clear_documents, cited_answer, summarize_document2, query_document
 from helpers import (
     serialize_documents,
     convert_ai_msg_to_json,
@@ -41,11 +41,101 @@ load_dotenv(find_dotenv())
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 index_name = os.getenv("PINECONE_INDEX_NAME")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+MAX_CHAT_HISTORY_LENGTH = 20
 
 flask_app = Flask(__name__)
 CORS(flask_app)
 flask_app.secret_key = os.urandom(24)
 session_id = os.urandom(24).hex() 
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "answer_queries_with_citations",
+            "description": "useful for when you need to answer a particular question with citations.",
+            "parameters": {},
+            "required": [],
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "miscellaneous_question_answerer",
+            "description": "useful for answering miscellaneous questions.",
+            "parameters": {},
+            "required": [],
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "summarize_document",
+            "description": "useful only when specifically asked for a document summary.",
+            "parameters": {},
+            "required": [],
+        }
+    }
+]
+
+@flask_app.route("/test", methods=["POST"])
+def test():
+    data = request.get_json()
+    user_question = data.get("question")
+    
+    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
+    llm_with_tools = llm.bind_tools(
+        tools=tools,
+        tool_choice="auto",
+    )
+    
+    contextualize_q_system_prompt = """Given a chat history and the latest user question \
+    which might reference context in the chat history, formulate a standalone question \
+    which can be understood without the chat history. Do NOT answer the question, \
+    just reformulate it if needed and otherwise return it as is."""
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}")
+        ]
+    )
+    contextualize_q_chain =  contextualize_q_prompt | llm | StrOutputParser()
+    
+    def contextualized_question(input: dict):
+        if input.get("chat_history"):
+            contextualized_question_output = contextualize_q_chain.invoke(input)
+            print("CONTEXTUALIZED OUTPUT:", contextualized_question_output)
+            return contextualized_question_output
+        else:
+            return input["question"]
+        
+    if "chat_history" not in session:
+        session["chat_history"] = []
+        
+    question_in_context = contextualized_question({"question": user_question, "chat_history": session["chat_history"]})
+
+    ai_function_call = llm_with_tools.invoke(question_in_context)
+    
+    if ai_function_call.additional_kwargs['tool_calls'] and ai_function_call.additional_kwargs['tool_calls'][0]["function"]["name"] == "summarize_document":
+        splits_dicts = load_splits_from_file(session_id)
+        if not splits_dicts:
+            response = jsonify({"error": "No documents loaded"}), 400
+        else:
+            summary = summarize_document2(user_question, splits_dicts)
+            response = jsonify({"answer": summary}), 200
+    else:
+        answer_with_citations = query_document(question_in_context)
+        response = jsonify({"answer": answer_with_citations}), 200 
+    
+    # if response["answer"]:    
+    #     print("add answer to chat history")
+        # session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict()])
+    
+    if len(session["chat_history"]) > MAX_CHAT_HISTORY_LENGTH:
+        session["chat_history"] = session["chat_history"][1:]
+    
+    return response
 
 @flask_app.route("/process", methods=["POST"])
 def process_file():
@@ -73,6 +163,8 @@ def process_file():
 
 @flask_app.route("/query", methods=["POST"])
 def query():
+    data = request.get_json()
+    user_question = data.get("question")
     embeddings = OpenAIEmbeddings()
     vectorstore = PineconeVectorStore(embedding=embeddings, index_name=index_name)
     
@@ -145,10 +237,7 @@ def query():
     if "chat_history" not in session:
         session["chat_history"] = []
         
-    data = request.get_json()
-    user_question = data.get("question")
-    print(session["chat_history"])
-    ai_msg = rag_chain_with_source.invoke(user_question)
+    # ai_msg = rag_chain_with_source.invoke(user_question)
     ai_msg = rag_chain_with_source.invoke(contextualized_question({"question": user_question, "chat_history": session["chat_history"]}))
     session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict(ai_msg)])
     print(ai_msg)
@@ -163,8 +252,6 @@ def summarize_document():
 
     llm = ChatAnthropic(model_name="claude-3-sonnet-20240229", anthropic_api_key=ANTHROPIC_API_KEY, temperature=0.5)
     
-    # llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
-    # llm = AnthropicLLM(model="claude-3-sonnet-20240229")
     splits_dicts = load_splits_from_file(session_id)
     print(splits_dicts)
     if not splits_dicts:
@@ -191,7 +278,24 @@ def summarize_document():
     summary = summarize_chain.invoke({"docs": splits_str, "question": user_question})
     print(summary)
     
-    # map_template = """The following is a set of documents
+    return jsonify({"summary": summary}), 200
+    
+    
+
+@flask_app.route("/delete", methods=["GET"])
+def delete_documents():
+    if "current_filepath" in session:
+        del session["current_filepath"]
+    # delete_splits_file(session_id)
+    clear_documents()
+    return jsonify({"message": "All documents deleted"}), 200
+    
+
+if __name__ == "__main__":
+    flask_app.run(debug=True, port=4000)
+    
+    
+# map_template = """The following is a set of documents
     # {docs}
     # Based on this list of docs, please identify the main themes 
     # Helpful Answer:"""
@@ -233,19 +337,3 @@ def summarize_document():
     # )
     # summary = chain.run(splits)
     # print(summary)
-    
-    return jsonify({"summary": summary}), 200
-    
-    
-
-@flask_app.route("/delete", methods=["GET"])
-def delete_documents():
-    if "current_filepath" in session:
-        del session["current_filepath"]
-    delete_splits_file(session_id)
-    clear_documents()
-    return jsonify({"message": "All documents deleted"}), 200
-    
-
-if __name__ == "__main__":
-    flask_app.run(debug=True, port=4000)
