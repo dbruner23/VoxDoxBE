@@ -1,10 +1,15 @@
 import os
+import json
 import pickle
+from getpass import getpass
 from dataclasses import asdict
 from langchain import hub
 from typing import List
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
+from langchain_openai import OpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_anthropic import AnthropicLLM
 from langchain.llms import OpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain.chains.llm import LLMChain
@@ -35,6 +40,7 @@ from werkzeug.utils import secure_filename
 load_dotenv(find_dotenv())
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 index_name = os.getenv("PINECONE_INDEX_NAME")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 flask_app = Flask(__name__)
 CORS(flask_app)
@@ -155,46 +161,70 @@ def summarize_document():
     data = request.get_json()
     user_question = data.get("question")
 
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
+    llm = ChatAnthropic(model_name="claude-3-sonnet-20240229", anthropic_api_key=ANTHROPIC_API_KEY, temperature=0.5)
+    
+    # llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
+    # llm = AnthropicLLM(model="claude-3-sonnet-20240229")
     splits_dicts = load_splits_from_file(session_id)
+    print(splits_dicts)
     if not splits_dicts:
         return jsonify({"error": "No documents loaded"}), 400
     splits = [Document(page_content=doc_dict['page_content'], metadata=doc_dict['metadata']) for doc_dict in splits_dicts]
     
-    map_template = """The following is a set of documents
-    {docs}
-    Based on this list of docs, please identify the main themes 
-    Helpful Answer:"""
-    map_prompt = PromptTemplate.from_template(map_template)
-    map_chain = LLMChain(llm=llm, prompt=map_prompt)
+    summarize_system_prompt = """You are an assistant for summarization tasks. \
+    Given the following document, please give a short summary of the content. \
+        
+    {docs}"""
     
-    reduce_template = """The following is set of summaries:
-    {docs}
-    Take these and distill it into a final, consolidated summary of the main themes. 
-    Helpful Answer:"""
-    reduce_prompt = PromptTemplate.from_template(reduce_template)
-    
-    reduce_chain = LLMChain(llm=llm, prompt=reduce_prompt)
-    
-    combine_documents_chain = StuffDocumentsChain(
-    llm_chain=reduce_chain, document_variable_name="docs"
+    summarize_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", summarize_system_prompt),
+            # MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}"),    
+        ]
     )
     
-    reduce_documents_chain = ReduceDocumentsChain(
-        combine_documents_chain=combine_documents_chain,
-        collapse_documents_chain=combine_documents_chain,
-        token_max=4000,
-    )
+    summarize_chain = summarize_prompt | llm | StrOutputParser()
     
-    map_reduce_chain = MapReduceDocumentsChain(
-        llm_chain=map_chain,
-        reduce_documents_chain=reduce_documents_chain,
-        document_variable_name="docs",
-        return_intermediate_steps=False,
-    )
+    splits_str = json.dumps(splits_dicts)
     
-    summary = map_reduce_chain.run(splits)
+    summary = summarize_chain.invoke({"docs": splits_str, "question": user_question})
     print(summary)
+    
+    # map_template = """The following is a set of documents
+    # {docs}
+    # Based on this list of docs, please identify the main themes 
+    # Helpful Answer:"""
+    # map_prompt = PromptTemplate.from_template(map_template)
+    # map_chain = map_prompt | llm 
+    
+    # reduce_template = """The following is set of summaries:
+    # {docs}
+    # Take these and distill it into a final, consolidated summary of the main themes. 
+    # Helpful Answer:"""
+    # reduce_prompt = PromptTemplate.from_template(reduce_template)
+    
+    # reduce_chain = reduce_prompt | llm
+    
+    # combine_documents_chain = StuffDocumentsChain(
+    #     llm_chain=reduce_chain, document_variable_name="docs"
+    # )
+    
+    # reduce_documents_chain = ReduceDocumentsChain(
+    #     combine_documents_chain=combine_documents_chain,
+    #     collapse_documents_chain=combine_documents_chain,
+    #     token_max=4000,
+    # )
+    
+    # map_reduce_chain = MapReduceDocumentsChain(
+    #     llm_chain=map_chain,
+    #     reduce_documents_chain=reduce_documents_chain,
+    #     document_variable_name="docs",
+    #     return_intermediate_steps=False,
+    # )
+    
+    # summary = map_reduce_chain.run(splits)
+
     # chain = load_summarize_chain(
     #     llm=llm,
     #     chain_type="refine",
