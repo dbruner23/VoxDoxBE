@@ -40,7 +40,7 @@ def convert_ai_msg_to_json(data):
 
     for doc in data["context"]:
         json_doc = {
-            "page_content": normalize_text(doc.page_content),
+            "page_content": doc.page_content,
             "metadata": doc.metadata
         }
         json_data["context"].append(json_doc)
@@ -52,6 +52,7 @@ def convert_messages_to_dict(message):
     if isinstance(message, HumanMessage):
         return {"content": message.content, "role": "human"}
     else:
+        print("MESSAGE: ", message)
         return {"content": message["answer"], "role": "ai"}
     
 def save_splits_to_file(splits, session_id):

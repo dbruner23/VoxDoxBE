@@ -87,19 +87,6 @@ def query_document(contextualized_question: str):
     
     llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
     
-    # contextualize_q_system_prompt = """Given a chat history and the latest user question \
-    # which might reference context in the chat history, formulate a standalone question \
-    # which can be understood without the chat history. Do NOT answer the question, \
-    # just reformulate it if needed and otherwise return it as is."""
-    # contextualize_q_prompt = ChatPromptTemplate.from_messages(
-    #     [
-    #         ("system", contextualize_q_system_prompt),
-    #         MessagesPlaceholder(variable_name="chat_history"),
-    #         ("human", "{question}")
-    #     ]
-    # )
-    # contextualize_q_chain =  contextualize_q_prompt | llm | StrOutputParser()
-    
     qa_system_prompt = """You are an assistant for question-answering tasks. \
     Use the following pieces of retrieved context to answer the question. \
     If you don't know the answer, just say that you don't know. \
@@ -110,18 +97,9 @@ def query_document(contextualized_question: str):
     qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", qa_system_prompt),
-            # MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),    
         ]
     )
-    
-    # def contextualized_question(input: dict):
-    #     if input.get("chat_history"):
-    #         contextualized_question_output = contextualize_q_chain.invoke(input)
-    #         print("CONTEXTUALIZED OUTPUT:", contextualized_question_output)
-    #         return contextualized_question_output
-    #     else:
-    #         return input["question"]
     
     def format_docs(docs: List[Document]):
         formatted = [
@@ -147,12 +125,6 @@ def query_document(contextualized_question: str):
         {"context": retriever, "question": RunnablePassthrough()}
     ).assign(answer=rag_chain_from_docs)
     
-    # if "chat_history" not in session:
-    #     session["chat_history"] = []
-        
-    # ai_msg = rag_chain_with_source.invoke(user_question)
     ai_msg = rag_chain_with_source.invoke(contextualized_question)
-    # session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict(ai_msg)])
-    print("AI_MSG:", ai_msg)
     
-    return {"answer": "testing"}
+    return ai_msg

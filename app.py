@@ -53,7 +53,7 @@ tools = [
         "type": "function",
         "function": {
             "name": "answer_queries_with_citations",
-            "description": "useful for when you need to answer a particular question with citations.",
+            "description": "useful for answering questions about article or document content.",
             "parameters": {},
             "required": [],
         }
@@ -78,7 +78,7 @@ tools = [
     }
 ]
 
-@flask_app.route("/test", methods=["POST"])
+@flask_app.route("/docquery", methods=["POST"])
 def test():
     data = request.get_json()
     user_question = data.get("question")
@@ -117,20 +117,24 @@ def test():
 
     ai_function_call = llm_with_tools.invoke(question_in_context)
     
+    summary_dict = None
+    answer_dict = None
     if ai_function_call.additional_kwargs['tool_calls'] and ai_function_call.additional_kwargs['tool_calls'][0]["function"]["name"] == "summarize_document":
         splits_dicts = load_splits_from_file(session_id)
         if not splits_dicts:
-            response = jsonify({"error": "No documents loaded"}), 400
+            return jsonify({"error": "No documents loaded"}, 400)
         else:
             summary = summarize_document2(user_question, splits_dicts)
-            response = jsonify({"answer": summary}), 200
+            summary_dict = {"answer": summary}
+            response = jsonify(summary_dict, 200)
     else:
         answer_with_citations = query_document(question_in_context)
-        response = jsonify({"answer": answer_with_citations}), 200 
+        response = jsonify({"answer": convert_ai_msg_to_json(answer_with_citations)}, 200) 
     
-    # if response["answer"]:    
-    #     print("add answer to chat history")
-        # session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict()])
+    if summary_dict:    
+        session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict(summary_dict)])
+    elif answer_dict:
+        session["chat_history"].extend([convert_messages_to_dict(HumanMessage(content=user_question)), convert_messages_to_dict(answer_with_citations)]) 
     
     if len(session["chat_history"]) > MAX_CHAT_HISTORY_LENGTH:
         session["chat_history"] = session["chat_history"][1:]
