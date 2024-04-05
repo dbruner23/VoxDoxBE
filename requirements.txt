@@ -6,6 +6,7 @@ requests
 flask_cors
 langchain-pinecone
 langchain-openai
+langchain-anthropic
 langchain-text-splitters
 langchainhub
 google-search-results
@@ -15,3 +16,5 @@ Flask-HTTPAuth
 langsmith
 pypdf
 pytest
+ipykernel
+boto3
