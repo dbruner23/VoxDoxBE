@@ -179,14 +179,6 @@ def process_file():
     if file_type not in {'pdf'}:
         return jsonify({'error': 'Invalid file type'}), 400
     
-    # try:
-    #     s3_client.upload_fileobj(file, S3_BUCKET_NAME, filename)
-    #     print(filename)
-    #     file_url = f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{filename}"
-    #     session['current_file_url'] = file_url
-    # except NoCredentialsError:
-    #     return jsonify({'error': 'AWS credentials not available'}), 500
-    
     print(file_type)
     
     if (file_type == 'pdf'):
