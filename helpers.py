@@ -9,8 +9,6 @@ def serialize_documents(documents):
         {
             "page_content": doc.page_content,
             "metadata": doc.metadata
-            # "source": doc.metadata['source'],
-            # "pageNumber": doc.metadata['page']
         } 
         for doc in documents
     ]
@@ -26,7 +24,7 @@ def normalize_text(text):
     
     text = re.sub(r'\ufb01' 'fi', text)
 
-    # Remove extra spaces (optional)
+    # Remove extra spaces
     text = re.sub(r'\s+', ' ', text).strip()  
 
     return text

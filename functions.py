@@ -15,7 +15,6 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.output_parsers.openai_tools import JsonOutputKeyToolsParser
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
-from helpers import convert_ai_msg_to_json
 
 load_dotenv(find_dotenv())
 index_name = os.getenv("PINECONE_INDEX_NAME")
@@ -85,7 +84,7 @@ def query_document(contextualized_question: str):
     
     retriever =  vectorstore.as_retriever()
     
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
+    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 1)
     
     qa_system_prompt = """You are an assistant for question-answering tasks. \
     Use the following pieces of retrieved context to answer the question. \

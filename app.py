@@ -17,12 +17,9 @@ from helpers import (
     convert_ai_msg_to_json,
     convert_messages_to_dict,
     save_splits_to_file,
-    load_splits_from_file,
-    delete_splits_file
+    load_splits_from_file
 )
 from werkzeug.utils import secure_filename
-import boto3
-from botocore.exceptions import NoCredentialsError
 
 load_dotenv(find_dotenv())
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
@@ -31,15 +28,6 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 APP_USERNAME = os.getenv("APP_USERNAME")
 APP_PASSWORDHASH = os.getenv("APP_PASSWORDHASH")
 MAX_CHAT_HISTORY_LENGTH = 20
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
 
 flask_app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -100,7 +88,7 @@ def authenticate():
 
 @flask_app.route("/docquery", methods=["POST"])
 @auth.login_required
-def test():
+def query():
     data = request.get_json()
     user_question = data.get("question")
     
