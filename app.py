@@ -95,7 +95,6 @@ def query():
     llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature = 0)
     llm_with_tools = llm.bind_tools(
         tools=tools,
-        tool_choice="auto",
     )
     
     contextualize_q_system_prompt = """Given a chat history and the latest user question \
